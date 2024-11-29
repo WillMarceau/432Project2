@@ -3,33 +3,33 @@
 #uncomment the topolgy you want. The simple two-server topology is uncommented here.
 
 # Change the SERVER variable below to point your server executable.
-SERVER=~/prog2/server
+SERVER=~/cs432/432Project2/test_server
 
 SERVER_NAME=`echo $SERVER | sed 's#.*/\(.*\)#\1#g'`
 
 # Generate a simple two-server topology
-$SERVER localhost 4000 localhost 4001 &
-$SERVER localhost 4001 localhost 4000 & 
+#$SERVER localhost 4720 localhost 4721 &
+#$SERVER localhost 4721 localhost 4720 & 
 
 # Generate a capital-H shaped topology
-#$SERVER localhost 4000 localhost 4001 &
-#$SERVER localhost 4001 localhost 4000 localhost 4002 localhost 4003 &
-#$SERVER localhost 4002 localhost 4001 & 
-#$SERVER localhost 4003 localhost 4001 localhost 4005 &
-#$SERVER localhost 4004 localhost 4005 &
-#$SERVER localhost 4005 localhost 4004 localhost 4003 localhost 4006 &
-#$SERVER localhost 4006 localhost 4005 &
+$SERVER localhost 4720 localhost 4721 &
+$SERVER localhost 4721 localhost 4720 localhost 4722 localhost 4723 &
+$SERVER localhost 4722 localhost 4721 & 
+$SERVER localhost 4723 localhost 4721 localhost 4725 &
+$SERVER localhost 4724 localhost 4725 &
+$SERVER localhost 4725 localhost 4724 localhost 4723 localhost 4726 &
+$SERVER localhost 4726 localhost 4725 &
 
 # Generate a 3x3 grid topology
-#$SERVER localhost 4000 localhost 4001 localhost 4003 &
-#$SERVER localhost 4001 localhost 4000 localhost 4002 localhost 4004 &
-#$SERVER localhost 4002 localhost 4001 localhost 4005 &
-#$SERVER localhost 4003 localhost 4000 localhost 4004 localhost 4006 &
-#$SERVER localhost 4004 localhost 4001 localhost 4003 localhost 4005 localhost 4007 &
-#$SERVER localhost 4005 localhost 4002 localhost 4004 localhost 4008 &
-#$SERVER localhost 4006 localhost 4003 localhost 4007 &
-#$SERVER localhost 4007 localhost 4006 localhost 4004 localhost 4008 &
-#$SERVER localhost 4008 localhost 4005 localhost 4007 &
+#$SERVER localhost 4720 localhost 4721 localhost 4723 &
+#$SERVER localhost 4721 localhost 4720 localhost 4722 localhost 4724 &
+#$SERVER localhost 4722 localhost 4721 localhost 4725 &
+#$SERVER localhost 4723 localhost 4720 localhost 4724 localhost 4726 &
+#$SERVER localhost 4724 localhost 4721 localhost 4723 localhost 4725 localhost 4007 &
+#$SERVER localhost 4725 localhost 4722 localhost 4724 localhost 4728 &
+#$SERVER localhost 4726 localhost 4723 localhost 4727 &
+#$SERVER localhost 4727 localhost 4726 localhost 4724 localhost 4728 &
+#$SERVER localhost 4728 localhost 4725 localhost 4727 &
 
 
 echo "Press ENTER to quit"

@@ -13,7 +13,36 @@
 // for error checking
 #include <errno.h>
 
-// MIGHT NEED TO NULL TERMINATE MY COPPIED STRINGS
+// identifier struct
+typedef struct {
+	char recent_ids[MAX_IDENTIFIERS][IDENTIFY_MAX];
+	int head;
+	int size;
+} identifierList;
+
+// server struct
+typedef struct {
+	struct sockaddr_in address;
+	char host[INET_ADDRSTRLEN];
+	int port;
+	//	char **channels;
+	channel_sub *channels;
+	int channel_size;
+	int channel_cap;
+} server;
+
+// struct for server List
+typedef struct {
+	server *servers;
+	int server_size;
+	int server_cap;
+} serverList;
+
+// struct for subbed channel array
+typedef struct {
+	char name[CHANNEL_MAX];
+	time_t last_join;
+} channel_sub;
 
 // might not need but struct to keep users name, ip and port to send to
 typedef struct {
@@ -55,6 +84,123 @@ void addUser(channelList *list, char *channelName, char *userName, struct sockad
 }
 */
 
+void addIdentifier(identifierList *buff, char *id) {
+	// adds an identifier to the identifier list
+	
+	// overwrite oldest entry if buff is full
+	if (buff->size == MAX_IDENTIFIERS) {
+		buff->head = (buff->head + 1) % MAX_IDENTIFIERS;
+	} else {
+		buff->size++;
+	}
+	int index = (buff->head + buff->size - 1) % MAX_IDENTIFIERS;
+	strncpy(buff->recent_ids[index], id, IDENTIFY_MAX - 1);
+	buff->recent_ids[index][IDENTIFY_MAX - 1] = '\0';
+}
+
+void initServerList(serverList *list) {
+	// initializes the servers server list
+	
+	list->servers = (server *)malloc(2 * sizeof(server));
+
+	// error checking
+	if (!list->servers) {
+		perror("Failed to allocate mem for serverList");
+		exit(EXIT_FAILURE);
+	}
+
+	// set vals
+	list->server_size = 0;
+	list->server_cap = 2;
+}
+
+void initServer(server *s) {
+	// initializes the servers channel list 
+	s->channels = (char **)malloc(2 * sizeof(char *));
+
+	// error checking
+	if (!s->channels) {
+		perror("Failed to allocate memory for channels");
+		exit(EXIT_FAILURE);
+	}
+	s->channel_size = 0;
+	s->channel_cap = 2;
+}
+
+void addServer(serverList *list, struct sockaddr_in address, char *host, int port) {
+	// adds a server to the server list
+	
+	// resize if need capacity
+	if (list->server_size >= list->server_cap) {
+		list->server_cap *= 2;
+		list->servers = (server *)realloc(list->servers, list->server_cap * sizeof(server));
+		// error checking
+		if (!list->servers) {
+			perror("Failed to reallocate mem for serverList");
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	// add the new server 
+	server *s = &list->servers[list->server_size++];
+	s->address = address;
+	strncpy(s->host, host, INET_ADDRSTRLEN - 1);
+	s->host[INET_ADDRSTRLEN - 1] = '\0';
+	s->port = port;
+
+	initServer(s);
+	
+}
+
+void addChannel(server *s, char *name) {
+	// adds a subscribed channel to a server
+	
+	// resize if need capacity
+	if (s->channel_size >= s->channel_cap) {
+		s->channel_cap *= 2;
+		//s->channels = (char **)realloc(s->channels, s->channel_cap * sizeof(char *));
+		s->channels = (channel_sub *)realloc(s->channels, s->channel_cap * sizeof(channel));
+		// error checking
+		if (!s->channels) {
+			perror("Failed to reallocate mem for server channels");
+			exit(EXIT_FAILURE);
+		}
+	}
+	s->channels[s->channel_size] = (char *)malloc(CHANNEL_MAX * sizeof(char));
+
+	// error checking
+	if (!s->channels[s->channel_size]) {
+		perror("Failed to allocate mem for channel name");
+		return;
+	}
+
+	// add channel
+	strncpy(s->channels[s->channel_size], name, CHANNEL_MAX - 1);
+	s->channels[s->channel_size][CHANNEL_MAX - 1] = '\0';
+	s->channel_size++;
+}
+
+void removeChannel(server *s, char *name) {
+	// removes a subscribed channel from a servers list
+	
+	// find channel
+	for (int i = 0; i < s->channel_size; i++) {
+		if (strcmp(s->channels[i], name) == 0) {
+			// remove channel
+			free(s->channels[i]);
+
+			// shift
+			for (int j = i; j < s->channel_size - 1; j++) {
+				s->channels[j] = s->channels[j + 1];
+			}
+
+			s->channel_size--;
+			break;
+		}
+	}
+
+}
+
 void addToChannel(channelList *list, char *channelName, char *userName, struct sockaddr_in address) {
 	// adds user to channel and if channel does not exist,
 	// adds a new channel to the channel list, and adds the user to that list
@@ -90,7 +236,6 @@ void addToChannel(channelList *list, char *channelName, char *userName, struct s
 			return;
 
 		}
-
 	}
 	
 	// resize if need capacity
@@ -269,10 +414,37 @@ int compareSocket(struct sockaddr_in addr1, struct sockaddr_in addr2) {
 	return (addr1.sin_family == addr2.sin_family) && (addr1.sin_port == addr2.sin_port) && (addr1.sin_addr.s_addr == addr2.sin_addr.s_addr);
 }
 
+void getIdentifier(char *buff) {
+	// func to read random bytes fro /dev/urandom into a buff
+	
+	// open /dev/urandom
+	int urandomfd = open("/dev/urandom", O_RDONLY);
+	if (urandomfd < 0) {
+		perror("error opening /dev/urandom");
+		exit(EXIT_FAILURE);
+	}
+
+	// read bytes into buff
+	ssize_t result = read(urandomfd, buff, IDENTIFY_MAX - 1);
+	
+	// error checking
+	if (result < 0) {
+		perror("error reading from /dev/urandom");
+		close(urandomfd);
+		exit(EXIT_FAILURE);
+	}
+	buff[IDENTIFY_MAX - 1] = '\0';
+	close(urandomfd);	
+}
+
 int main(int argc, char *argv[]) {
 
-	if (argc != 3) {
-		printf("Usage: ./server server_socket server_port");
+	if (argc < 3) {
+		printf("Usage: ./server <i>_domain_name <i>_ port_num\n");
+		return -1;
+	}
+	else if ((argc - 1) % 2 != 0) {
+		printf("Usage: each server must have a both a domain name and port num\n");
 		return -1;
 	}
 
@@ -284,6 +456,8 @@ int main(int argc, char *argv[]) {
 	//if (strcmp(serverHost, "localhost") == 0) {
 		//serverHost = "127.0.0.1";
 	//}
+	
+	// set up server list
 
 	// resolve hostname
 	struct addrinfo hints, *resolution;
@@ -298,7 +472,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	// convert port to int for socket addr struct and binding
-	int serverPort = atoi(serverPortString);
+	//int serverPort = atoi(serverPortString);
 
 	// create server socket
 	int socketfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -306,19 +480,66 @@ int main(int argc, char *argv[]) {
 		perror("Socket Failure");
 	}
 
+	// set up serverList
+	serverList servList;
+	initServerList(&servList);
+
+	// loop through the inputed arguments
+	for (int i = 3; i < argc; i += 2) {
+		//printf("%s\n", argv[i]);
+		const char *comHost = argv[i];
+		//printf("%s\n", argv[i + 1]);
+		char *comPortString = argv[i + 1];
+
+		// resolve hostname
+		struct addrinfo h, *res;
+		memset(&h, 0, sizeof(h));
+		h.ai_family = AF_INET;
+		h.ai_socktype = SOCK_DGRAM;
+
+		int comStatus = getaddrinfo(comHost, comPortString, &h, &res);
+
+		// error checking
+		if (comStatus != 0) {
+			perror("Failed to resolve host name");
+			return -1;
+		}
+		
+		// get addr
+		struct sockaddr_in *addr = (struct sockaddr_in *)res->ai_addr;
+
+		// get host string
+		char comHostString[INET_ADDRSTRLEN];
+		strncpy(comHostString, inet_ntoa(addr->sin_addr), INET_ADDRSTRLEN - 1);
+		comHostString[INET_ADDRSTRLEN - 1] = '\0';
+
+		// get port num
+		int comSocketString = ntohs(addr->sin_port);
+
+		//printf("%s:%d\n", comHostString, comSocketString);
+		fflush(stdout);
+
+
+
+		// add the server
+		addServer(&servList, *addr, comHostString, comSocketString);
+		freeaddrinfo(res);
+		
+	}
+
 	// set non blocking mode
 	int flags = fcntl(socketfd, F_GETFL, 0);
 	fcntl(socketfd, F_SETFL, flags | O_NONBLOCK);
 
 	// create server addr and client addr struct
-	struct sockaddr_in serverAddr, clientAddr;
+	struct sockaddr_in clientAddr;
 	socklen_t clientLength = sizeof(clientAddr);
 
 	// clean struct
-	memset(&serverAddr, 0, sizeof(serverAddr));
-	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_port = htons(serverPort);
-	serverAddr.sin_addr.s_addr = INADDR_ANY;
+	//memset(&serverAddr, 0, sizeof(serverAddr));
+	//serverAddr.sin_family = AF_INET;
+	//serverAddr.sin_port = htons(serverPort);
+	//serverAddr.sin_addr.s_addr = INADDR_ANY;
 
 	// bind socket
 	//if (bind(socketfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0) {
@@ -331,6 +552,30 @@ int main(int argc, char *argv[]) {
 	// free the resolution 
 	freeaddrinfo(resolution);
 
+	// cast for name extraction
+	struct sockaddr_in *serverAddr = (struct sockaddr_in *)resolution->ai_addr;
+
+	// get host name and socket for log
+	char serverHostString[INET_ADDRSTRLEN];
+	strncpy(serverHostString, inet_ntoa(serverAddr->sin_addr), INET_ADDRSTRLEN - 1);
+	serverHostString[INET_ADDRSTRLEN - 1] = '\0';
+	
+	int serverSocketString = ntohs(serverAddr->sin_port);
+
+	// set up own server
+	server myServer;
+	initServer(&myServer);
+
+	/*printf("%s:%d\n", serverHostString, serverSocketString);
+	fflush(stdout);
+
+	for (int i = 0; i < servList.server_size; i++) {
+		printf("%d\n", servList.servers[i].port);
+		fflush(stdout);
+	}
+
+	printf("\n"); */
+
 	// init variables
 	fd_set readfds;
 	struct timeval timeout;
@@ -338,7 +583,11 @@ int main(int argc, char *argv[]) {
 	char inUsername[USERNAME_MAX];
 	char inChannel[CHANNEL_MAX];
 	char inMessage[SAY_MAX];
+	char inIdentifier[IDENTIFY_MAX];
 	ssize_t bytes;
+	identifierList identifiers;
+	identifiers.size = 0;
+	identifiers.head = 0;
 
 	// create the channelList
 	channelList *chanList = (channelList *)malloc(sizeof(channelList));
@@ -402,8 +651,20 @@ int main(int argc, char *argv[]) {
 					
 				perror("error reading bytes sent to socket\n");
 			}
-			
 			else {
+		//	printf("Received from client %s:%d\n",
+       		//	inet_ntoa(clientAddr.sin_addr), ntohs(clientAddr.sin_port));
+	
+		//	inet_ntop is thread save, if needed
+		//
+		//	get Client Host string and socket for log
+				char clientHostString[INET_ADDRSTRLEN]; 
+				strncpy(clientHostString, inet_ntoa(clientAddr.sin_addr), INET_ADDRSTRLEN - 1);   
+				clientHostString[INET_ADDRSTRLEN - 1] = '\0'; 
+
+
+				int clientSocketString = ntohs(clientAddr.sin_port);
+				//printf("Recieved from %s:%d\n", clientHostString, clientSocketString);
 				// create base request struct
 				struct request *baseRequest = (struct request *)inBuff;
 
@@ -429,7 +690,7 @@ int main(int argc, char *argv[]) {
 					//addToChannel(chanList, inChannel, inUsername, clientAddr);
 					addUserList(uList, inUsername, clientAddr);
 
-					printf("server: %s logs in\n", inUsername);
+					printf("%s:%d %s:%d recv Request login %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inUsername);
 
 					//printf("%s\n", chanList->channels[0].users[0].username);
 					}
@@ -479,7 +740,8 @@ int main(int argc, char *argv[]) {
 					if (search) {
 
 					// remove user from all channels
-					printf("server: %s logs out\n", inUsername);
+					//printf("server: %s logs out\n", inUsername);
+					printf("%s:%d %s logs out\n", serverHostString, serverSocketString, inUsername);
 					int index = 0;
 					//char currentName[CHANNEL_MAX];
 					while(index < chanList->size) {
@@ -581,10 +843,60 @@ int main(int argc, char *argv[]) {
 
 					if (!search) {
 
+						// user joins the channel
+						printf("%s:%d %s:%d recv Request join %s %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inUsername, inChannel);
+
 						// add user to channel
 						addToChannel(chanList, inChannel, inUsername, clientAddr);
+
+						// check if subbed
+						int subbed = 0;
+						for (int i = 0; i < myServer.channel_size; i++) {
+							if (strcmp(inChannel, myServer.channels[i]) == 0) {
+								subbed = 1;
+								break;
+							}
+
+						}
+
+						if (!subbed) {
+
+							// add to subbed channels
+							addChannel(&myServer, inChannel);
+
+							// create the s2s join message
+							struct s2s_join join_s2s;
+							join_s2s.req_type = S2S_JOIN;
+							strncpy(join_s2s.req_channel, inChannel, CHANNEL_MAX - 1);
+							join_s2s.req_channel[CHANNEL_MAX - 1] = '\0';
+
+							// send the s2s join message
+							for (int i = 0; i < servList.server_size; i++) {
+
+								int search = 0; 
+								// add channel to server if not in it already
+								for (int j = 0; j < servList.servers[i].channel_size; j++) {
+									if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+										search = 1;
+									}
+								}
+
+								if (!search) {
+									addChannel(&servList.servers[i], inChannel);
+								}
+
+
+								printf("%s:%d %s:%d send S2S Join %s\n", serverHostString, serverSocketString, servList.servers[i].host, servList.servers[i].port, inChannel);
+								bytes = sendto(socketfd, &join_s2s, sizeof(join_s2s), 0, (struct sockaddr *)&servList.servers[i].address, sizeof(struct sockaddr_in));
+
+								if (bytes < 0) {
+									printf("error sending bytes\n");
+								}
+
+							}
+						}
+
 					}
-					printf("server: %s joins channel %s\n", inUsername, inChannel);
 					}
 					else {
 						//printf("server: user not logged in, dropping packet\n");
@@ -613,8 +925,8 @@ int main(int argc, char *argv[]) {
 					
 
 					}
-
 				}
+
 
 				// leave request
 				else if (type == REQ_LEAVE) {
@@ -729,6 +1041,8 @@ int main(int argc, char *argv[]) {
 					// bad packet
 					else {
 						printf("server: Bad packet, expecting packet of size 36, got %ld\n", inbytes);
+						printf("leave\n");
+						fflush(stdout);
 
 
 						char errorBuff[SAY_MAX];
@@ -998,7 +1312,8 @@ int main(int argc, char *argv[]) {
 					say_text.txt_text[SAY_MAX - 1] = '\0';
 
 					// print to server
-					printf("server: %s sends say message in %s\n", inUsername, inChannel);
+					//printf("server: %s sends say message in %s\n", inUsername, inChannel);
+					printf("%s:%d %s:%d recv Request say %s %s \"%s\"\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inUsername, inChannel, inMessage);
 
 					// find channel
 					for (int i = 0; i < chanList->size; i++) {
@@ -1017,8 +1332,38 @@ int main(int argc, char *argv[]) {
 							break;
 						}
 					}
+
+					// create s2s say message
+					struct s2s_say say_s2s;
+					say_s2s.req_type = S2S_SAY;
+					getIdentifier(say_s2s.unique);
+					strncpy(say_s2s.req_username, inUsername, USERNAME_MAX - 1);
+					say_s2s.req_username[USERNAME_MAX - 1] = '\0';
+					strncpy(say_s2s.req_channel, inChannel, CHANNEL_MAX - 1);
+					say_s2s.req_channel[USERNAME_MAX - 1] = '\0';
+					strncpy(say_s2s.req_text, inMessage, SAY_MAX - 1);
+					say_s2s.req_text[SAY_MAX - 1] = '\0';
+
+					// find subbed servers
+					for (int i = 0; i < servList.server_size; i++) {
+						for (int j = 0; j < servList.servers[i].channel_size; j++) {
+							if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+								// log
+								printf("%s:%d %s:%d send S2S say %s %s \"%s\"\n", serverHostString, serverSocketString, servList.servers[i].host, servList.servers[i].port, inUsername, inChannel, inMessage);
+								// send message
+								bytes = sendto(socketfd, &say_s2s, sizeof(say_s2s), 0, (struct sockaddr *)&servList.servers[i].address, sizeof(struct sockaddr_in));
+
+								if (bytes < 0) {
+									printf("error sending bytes \n");
+								}
+							}
+						}
+
 					}
 
+
+
+					}
 					else {
 					//	printf("server: user not logged in, dropping packet\n");
 					}
@@ -1046,10 +1391,269 @@ int main(int argc, char *argv[]) {
 
 
 				}
+				
+				// handle s2s join message
+				else if (type == S2S_JOIN) {
+					if (inbytes == 36) {
+					// extract info 
+					struct s2s_join *join_s2s = (s2s_join *)baseRequest;
+
+					strncpy(inChannel, join_s2s->req_channel, CHANNEL_MAX - 1);
+					inChannel[CHANNEL_MAX - 1] = '\0';
+
+					printf("%s:%d %s:%d recv S2S Join %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inChannel);
+
+					// add subscription to corresponding server record
+					for (int i = 0; i < servList.server_size; i++) {
+						if (compareSocket(clientAddr, servList.servers[i].address)) {
+							addChannel(&servList.servers[i], inChannel);
+							break;
+						}
+					}
+					int subbed = 0;
+					// check if server is subscribed
+					for (int i = 0; i < myServer.channel_size; i++) {
+						// if subbed
+						if (strcmp(inChannel, myServer.channels[i]) == 0) {
+							subbed = 1;
+						}
+					}
+
+					// sub and send join further if not subbed
+					if (!subbed) {
+						// add to subbed channels
+						addChannel(&myServer, inChannel);
+
+						// create the s2s join message
+						struct s2s_join out_s2s;
+						out_s2s.req_type = S2S_JOIN;
+						strncpy(out_s2s.req_channel, inChannel, CHANNEL_MAX - 1);
+						out_s2s.req_channel[CHANNEL_MAX - 1] = '\0';
+
+						// send the s2s join message down the treed
+						for (int i = 0; i < servList.server_size; i++) {
+							if (!compareSocket(clientAddr, servList.servers[i].address)) {
+								int search = 0; 
+								// add channel to server if not in it already
+								for (int j = 0; j < servList.servers[i].channel_size; j++) {
+									if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+										search = 1;
+									}
+								}
+
+								if (!search) {
+									addChannel(&servList.servers[i], inChannel);
+								}
+
+								printf("%s:%d %s:%d send S2S Join %s\n", serverHostString, serverSocketString, servList.servers[i].host, servList.servers[i].port, inChannel);
+								bytes = sendto(socketfd, &out_s2s, sizeof(out_s2s), 0, (struct sockaddr *)&servList.servers[i].address, sizeof(struct sockaddr_in));
+
+								if (bytes < 0) {
+									printf("error sending bytes\n");
+								}
+							}
+
+						}
+						
+					}
+					}
+					else {
+						printf("bad packet, got %ld, when expecting 36 bytes\n", inbytes);
+						/*char errorBuff[SAY_MAX];
+						// pack error struct
+						struct text_error error_text;
+						error_text.txt_type = TXT_ERROR;
+				
+						snprintf(errorBuff, SAY_MAX, "Error: Sent bad Say Packet");
+						strncpy(error_text.txt_error, errorBuff, SAY_MAX - 1);
+						error_text.txt_error[SAY_MAX - 1] = '\0';
+						// send error to client
+						bytes = sendto(socketfd, &error_text, sizeof(error_text), 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
+						if (bytes < 0) {
+							perror("error sending bytes\n");
+						}
+						*/
+					
+					}
+
+
+				}
+
+				else if (type == S2S_SAY) {
+					if (inbytes == 140) {
+						// extract info
+						struct s2s_say *say_s2s = (s2s_say *)baseRequest;
+						strncpy(inIdentifier, say_s2s->unique, IDENTIFY_MAX - 1);
+						inIdentifier[IDENTIFY_MAX - 1] = '\0';
+						
+						strncpy(inUsername, say_s2s->req_username, USERNAME_MAX - 1);
+						inUsername[USERNAME_MAX - 1] = '\0';
+
+						strncpy(inChannel, say_s2s->req_channel, CHANNEL_MAX - 1);
+						inChannel[CHANNEL_MAX - 1] = '\0';
+
+						strncpy(inMessage, say_s2s->req_text, SAY_MAX - 1);
+						inMessage[SAY_MAX - 1] = '\0';
+
+						int found = 0;
+						// check for identifier in list
+						for (int i = 0; i < identifiers.size; i++) {
+						
+							// if exists drop packet and send leave to prevent loop
+							if (strcmp(identifiers.recent_ids[i], inIdentifier) == 0) {
+								found = 1;
+								printf("dropping packet\n");
+								break;
+							}
+						}
+
+						if (!found) {
+
+						// add identifer to recent list
+						addIdentifier(&identifiers, inIdentifier);
+
+						// message to all clients of this server
+						struct text_say say_text;
+						say_text.txt_type = TXT_SAY;
+						strncpy(say_text.txt_channel, inChannel, CHANNEL_MAX - 1);
+						say_text.txt_channel[CHANNEL_MAX - 1] = '\0';
+						strncpy(say_text.txt_username, inUsername, USERNAME_MAX - 1);
+						say_text.txt_username[USERNAME_MAX - 1] = '\0';
+						strncpy(say_text.txt_text, inMessage, SAY_MAX - 1);
+						say_text.txt_text[SAY_MAX - 1] = '\0';
+
+						// print to server
+						//printf("server: %s sends say message in %s\n", inUsername, inChannel);
+						printf("%s:%d %s:%d recv S2S say %s %s \"%s\"\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inUsername, inChannel, inMessage);
+
+						int client = 0;
+						// find channel
+						for (int i = 0; i < chanList->size; i++) {
+							if (strcmp(inChannel, chanList->channels[i].name) == 0) {
+								// for each user on channel
+								client = 1;
+								for (int j = 0; j < chanList->channels[i].size; j++) {
+									//if (compareSocket(chanList->channels[i].users[j].address, clientAddr)) {
+										//}
+								// send message to user
+									bytes = sendto(socketfd, &say_text, sizeof(say_text), 0, (struct sockaddr *)&chanList->channels[i].users[j].address, sizeof(struct sockaddr_in));
+
+									if (bytes < 0) {
+										printf("error sending bytes\n");
+									}
+								}
+							break;
+							}
+						}
+						int servs = 0;
+						// forward message to all subsribed neighbors
+						for (int i = 0; i < servList.server_size; i++) {
+							//printf("%d\n", servList.servers[i].port);
+							if (!compareSocket(clientAddr, servList.servers[i].address)) {
+								for (int j = 0; j < servList.servers[i].channel_size; j++) {
+									if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+										servs = 1;
+										printf("%s:%d %s:%d send S2S say %s %s \"%s\"\n", serverHostString, serverSocketString, servList.servers[i].host, servList.servers[i].port, inUsername, inChannel, inMessage);
+										bytes = sendto(socketfd, say_s2s, sizeof(*say_s2s), 0, (struct sockaddr *)&servList.servers[i].address, sizeof(struct sockaddr_in));
+									
+										if (bytes < 0) {
+											printf("error sending bytes\n");
+										}
+										break;
+									}
+								}
+							}
+						}
+						// no clients or servers to forward to 
+						if (!servs && !client) {
+							// remove channel from your subs
+							removeChannel(&myServer, inChannel);
+
+							// create s2s leave message
+							struct s2s_leave leave_s2s;
+							leave_s2s.req_type = S2S_LEAVE;
+							strncpy(leave_s2s.req_channel, inChannel, CHANNEL_MAX - 1);
+							leave_s2s.req_channel[CHANNEL_MAX - 1] = '\0';
+
+							// log
+							printf("%s:%d %s:%d send S2S Leave %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inChannel);
+
+							// send s2s leave message
+							bytes = sendto(socketfd, &leave_s2s, sizeof(leave_s2s), 0, (struct sockaddr*)&clientAddr, sizeof(struct sockaddr_in));
+							if (bytes < 0) {
+								printf("error sending bytes\n");
+							}
+
+						
+						}
+
+						}
+					}
+					else {
+						printf("bad packet, got %ld, when expecting 140 bytes", inbytes);/*
+						char errorBuff[SAY_MAX];
+						// pack error struct
+						struct text_error error_text;
+						error_text.txt_type = TXT_ERROR;
+				
+						snprintf(errorBuff, SAY_MAX, "Error: Sent bad Say Packet");
+						strncpy(error_text.txt_error, errorBuff, SAY_MAX - 1);
+						error_text.txt_error[SAY_MAX - 1] = '\0';
+						// send error to client
+						bytes = sendto(socketfd, &error_text, sizeof(error_text), 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
+						if (bytes < 0) {
+							perror("error sending bytes\n");
+						}
+						*/
+					
+					}
+
+				}
+
+				else if (type == S2S_LEAVE) {
+					if (inbytes == 36) {
+						// extract info
+						struct s2s_leave *l_s2s = (s2s_leave *)baseRequest;
+						strncpy(inChannel, l_s2s->req_channel, CHANNEL_MAX - 1);
+						inChannel[CHANNEL_MAX - 1] = '\0';
+
+						printf("%s:%d %s:%d recv 2S2 Leave %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inChannel);
+						
+						// find server
+						for (int i = 0; i < servList.server_size; i++) {
+							if (compareSocket(servList.servers[i].address, clientAddr)) {
+								
+								// remove channel
+								removeChannel(&servList.servers[i], inChannel);
+								break;
+							}	
+						}
+					}
+
+					else {
+						printf("bad packet, got %ld, when expecting 36 bytes", inbytes);
+						/*char errorBuff[SAY_MAX];
+						// pack error struct
+						struct text_error error_text;
+						error_text.txt_type = TXT_ERROR;
+				
+						snprintf(errorBuff, SAY_MAX, "Error: Sent bad Say Packet");
+						strncpy(error_text.txt_error, errorBuff, SAY_MAX - 1);
+						error_text.txt_error[SAY_MAX - 1] = '\0';
+						// send error to client
+						bytes = sendto(socketfd, &error_text, sizeof(error_text), 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
+						if (bytes < 0) {
+							perror("error sending bytes\n");
+						}
+						*/
+			
+					}
+				}
 
 				// unknown request
 				else {
 						printf("Server: recieved Unknown packet\n");
+						/*
 
 						// fill struct
 						char errorBuff[SAY_MAX];
@@ -1066,6 +1670,7 @@ int main(int argc, char *argv[]) {
 						if (bytes < 0) {
 							perror("error sending bytes\n");
 						}
+						*/
 
 				}
 

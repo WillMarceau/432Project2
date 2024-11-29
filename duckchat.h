@@ -1,6 +1,8 @@
 #ifndef DUCKCHAT_H
 #define DUCKCHAT_H
 
+#include <stdint.h>
+
 /* Path names to unix domain sockets should not be longer than this */
 #ifndef UNIX_PATH_MAX
 #define UNIX_PATH_MAX 108
@@ -16,6 +18,8 @@
 #define USERNAME_MAX 32
 #define CHANNEL_MAX 32
 #define SAY_MAX 64
+#define IDENTIFY_MAX 8
+#define MAX_IDENTIFIERS 50
 
 /* Define some types for designating request and text codes */
 typedef int request_t;
@@ -30,6 +34,9 @@ typedef int text_t;
 #define REQ_LIST 5
 #define REQ_WHO 6
 #define REQ_KEEP_ALIVE 7 /* Only needed by graduate students */
+#define S2S_JOIN 8
+#define S2S_LEAVE 9
+#define S2S_SAY 10
 
 /* Define codes for text types.  These are the messages sent to the client. */
 #define TXT_SAY 0
@@ -84,6 +91,25 @@ struct request_keep_alive {
         request_t req_type; /* = REQ_KEEP_ALIVE */
 } packed;
 
+struct s2s_join {
+	request_t req_type; /* S2S_JOIN */
+	char req_channel[CHANNEL_MAX];
+} packed;
+
+struct s2s_leave {
+	request_t req_type; /* S2S_LEAVE */
+	char req_channel[CHANNEL_MAX];
+} packed;
+
+struct s2s_say {
+	request_t req_type; /* S2S_SAY */
+	char unique[IDENTIFY_MAX];
+	char req_username[USERNAME_MAX];
+	char req_channel[CHANNEL_MAX];
+	char req_text[SAY_MAX];
+
+} packed;
+
 /* This structure is used for a generic text type, to the client. */
 struct text {
         text_t txt_type;
@@ -127,5 +153,8 @@ struct text_error {
         text_t txt_type; /* = TXT_ERROR */
         char txt_error[SAY_MAX]; // Error message
 } packed;
+
+// Structs for the S2S messages
+
 
 #endif
