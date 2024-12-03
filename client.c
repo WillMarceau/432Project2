@@ -528,6 +528,12 @@ int main(int argc, char *argv[]) {
 
 			buff[0] = '\0';
 			//printf("tokens: %s\n", tokens[0]);
+			//
+
+			if (count == 0) {
+				char empty[] = "";
+				tokens[0] = empty;
+			}
 
 
 

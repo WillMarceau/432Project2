@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#include <signal.h>
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,9 +10,13 @@
 #include "duckchat.h"
 #include <fcntl.h>
 #include <netdb.h>
+#include <sys/time.h>
+#include <pthread.h>
 
 // for error checking
 #include <errno.h>
+
+pthread_mutex_t lock;
 
 // identifier struct
 typedef struct {
@@ -20,12 +25,19 @@ typedef struct {
 	int size;
 } identifierList;
 
+// struct for subbed channel array
+typedef struct {
+	char name[CHANNEL_MAX];
+	int timer;
+	int last_join;
+} channel_sub;
+
 // server struct
 typedef struct {
 	struct sockaddr_in address;
 	char host[INET_ADDRSTRLEN];
 	int port;
-	//	char **channels;
+	//char **channels;
 	channel_sub *channels;
 	int channel_size;
 	int channel_cap;
@@ -37,12 +49,6 @@ typedef struct {
 	int server_size;
 	int server_cap;
 } serverList;
-
-// struct for subbed channel array
-typedef struct {
-	char name[CHANNEL_MAX];
-	time_t last_join;
-} channel_sub;
 
 // might not need but struct to keep users name, ip and port to send to
 typedef struct {
@@ -76,6 +82,16 @@ typedef struct {
 	int size;
 } userList;
 
+// thread struct
+typedef struct {
+	serverList *l;
+	server *s;
+	int socket;
+} threadInfo;
+
+volatile sig_atomic_t timer_flag = 0;
+volatile sig_atomic_t exiting = 0;
+
 // helper functions
 /*
 void addUser(channelList *list, char *channelName, char *userName, struct sockaddr_in address) {
@@ -83,6 +99,38 @@ void addUser(channelList *list, char *channelName, char *userName, struct sockad
 	// find channel in list
 }
 */
+
+//void signal_handler(int sig) {
+	// sets shutdown
+	//(void)sig;
+	//exiting = 1;
+//}
+
+void timerHandler(int signum) {
+	// update flag
+	(void)signum;
+	timer_flag = 1;
+}
+
+void setupTimer() {
+	// setup timeout timer
+	
+	struct sigaction sa;
+	struct itimerval timer;
+
+	// clear space and init
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = timerHandler;
+	sigaction(SIGALRM, &sa, NULL);
+
+	timer.it_value.tv_sec = 1;
+	timer.it_value.tv_usec = 0;
+	timer.it_interval.tv_sec = 5;
+	timer.it_interval.tv_usec = 0;
+
+	// start
+	setitimer(ITIMER_REAL, &timer, NULL);
+}
 
 void addIdentifier(identifierList *buff, char *id) {
 	// adds an identifier to the identifier list
@@ -116,7 +164,8 @@ void initServerList(serverList *list) {
 
 void initServer(server *s) {
 	// initializes the servers channel list 
-	s->channels = (char **)malloc(2 * sizeof(char *));
+	//s->channels = (char **)malloc(2 * sizeof(char *));
+	s->channels = (channel_sub *)malloc(2 * sizeof(channel_sub));
 
 	// error checking
 	if (!s->channels) {
@@ -166,17 +215,20 @@ void addChannel(server *s, char *name) {
 			exit(EXIT_FAILURE);
 		}
 	}
-	s->channels[s->channel_size] = (char *)malloc(CHANNEL_MAX * sizeof(char));
+	//s->channels[s->channel_size].name = (char *)malloc(CHANNEL_MAX * sizeof(char));
 
 	// error checking
-	if (!s->channels[s->channel_size]) {
-		perror("Failed to allocate mem for channel name");
-		return;
-	}
+	//if (!s->channels[s->channel_size]) {
+		//perror("Failed to allocate mem for channel name");
+		//return;
+	//}
 
 	// add channel
-	strncpy(s->channels[s->channel_size], name, CHANNEL_MAX - 1);
-	s->channels[s->channel_size][CHANNEL_MAX - 1] = '\0';
+	strncpy(s->channels[s->channel_size].name, name, CHANNEL_MAX - 1);
+	//s->channels[s->channel_size][CHANNEL_MAX - 1] = '\0';
+	s->channels[s->channel_size].name[CHANNEL_MAX - 1] = '\0';
+	s->channels[s->channel_size].timer = 60;
+	s->channels[s->channel_size].last_join = 120;
 	s->channel_size++;
 }
 
@@ -185,9 +237,10 @@ void removeChannel(server *s, char *name) {
 	
 	// find channel
 	for (int i = 0; i < s->channel_size; i++) {
-		if (strcmp(s->channels[i], name) == 0) {
+		//if (strcmp(s->channels[i], name) == 0) {
+		if (strcmp(s->channels[i].name, name) == 0) {
 			// remove channel
-			free(s->channels[i]);
+			//free(s->channels[i]);
 
 			// shift
 			for (int j = i; j < s->channel_size - 1; j++) {
@@ -437,6 +490,150 @@ void getIdentifier(char *buff) {
 	close(urandomfd);	
 }
 
+/*
+void handleTimers(server *myServ, serverList *others) {
+	// func to handle channel timers
+	
+	// loop over my channels
+	for (int i = 0; i < myServ->channel_size; i++) {
+		if (myServ->channels[i].timer > 0) {
+			myServ->channels[i].timer -= 5;
+			printf("mine: %d\n", myServ->channels[i].timer);
+		}
+
+		// resend if needed
+		if (myServ->channels[i].timer == 0) {
+			myServ->channels[i].timer = 60;
+			
+			// send renew
+			printf("send S2S renew %s\n", myServ->channels[i].name);
+		}
+	}
+
+	// loop over other channels
+	for (int i = 0; i < others->server_size; i++) {
+		for (int j = 0; j < others->servers[i].channel_size; j++) {
+			//printf("S: %d\n", others->servers[i].channels[j].last_join);
+			if (others->servers[i].channels[j].last_join > 0) {
+				others->servers[i].channels[j].last_join -= 5;
+				printf("Others: %d\n", others->servers[i].channels[j].last_join);
+
+			}
+
+			// remove if needed
+			if (others->servers[i].channels[j].last_join == 0) {
+				// remove
+				//printf("forcfully removing %s\n", others->servers[i].channels[j].name);
+			}
+		}
+	}
+	
+}
+*/
+
+void *handleTimers(void *arg) {
+	// function for timeout thread
+
+	// sleep for second
+
+	// get mutex
+	threadInfo *info = (threadInfo *)arg;
+
+	while (!exiting) {
+		sleep(1);
+		pthread_mutex_lock(&lock);
+	//	printf("%s\n", info->s->host);
+		for (int i = 0; i < info->l->server_size; i++) {
+			//for (int j = 0; j < info->l->servers[i].channel_size; j++) {
+			for (int j = info->l->servers[i].channel_size - 1; j >= 0; j--) {
+				if (info->l->servers[i].channels[j].last_join > 0) {
+					info->l->servers[i].channels[j].last_join--;
+				}
+
+				// remove if timout
+				if (info->l->servers[i].channels[j].last_join == 0) {
+					//printf("removing channel\n");
+					printf("%s:%d %s:%d forcefully removing %s\n", info->s->host, info->s->port, info->l->servers[i].host, info->l->servers[i].port, info->l->servers[i].channels[j].name);
+					removeChannel(&info->l->servers[i], info->l->servers[i].channels[j].name);
+				}
+			}	
+		}
+		for (int i = 0; i < info->s->channel_size; i++) {
+			if (info->s->channels[i].timer > 0) {
+				info->s->channels[i].timer--;
+			}
+
+			// renewal if needed
+			if (info->s->channels[i].timer == 0) {
+				info->s->channels[i].timer = 60;
+				//printf("%s:%d sending renewal\n");
+
+				// send renewal
+				// create the s2s join message
+				int bytes;
+				struct s2s_join join_s2s;
+				join_s2s.req_type = S2S_JOIN;
+				strncpy(join_s2s.req_channel, info->s->channels[i].name, CHANNEL_MAX - 1);
+				join_s2s.req_channel[CHANNEL_MAX - 1] = '\0';
+
+				// send the s2s join message
+				for (int k = 0; k < info->l->server_size; k++) {
+
+					int search = 0; 
+					// add channel to server if not in it already
+					for (int j = 0; j < info->l->servers[k].channel_size; j++) {
+						//if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+						if (strcmp(info->l->servers[k].channels[j].name, info->s->channels[i].name) == 0) {
+							search = 1;
+						}
+					}
+
+					if (!search) {
+						addChannel(&info->l->servers[k], info->s->channels[i].name);
+					}
+
+
+					printf("%s:%d %s:%d send renew S2S Join %s\n", info->s->host, info->s->port, info->l->servers[k].host, info->l->servers[k].port, info->s->channels[i].name);
+					bytes = sendto(info->socket, &join_s2s, sizeof(join_s2s), 0, (struct sockaddr *)&info->l->servers[k].address, sizeof(struct sockaddr_in));
+
+					if (bytes < 0) {
+						printf("error sending bytes\n");
+					}
+
+				}
+			}
+		}
+		pthread_mutex_unlock(&lock);
+		
+	}
+	return NULL;
+}
+
+/*
+void *handleRenewal(void *arg) {
+	// func for Join Renewal thread
+	
+	sleep(1);
+	while (!exiting) {
+		for (int i = 0; i < myServ->channel_size; i++) {
+			if (myServ->channels[i].timer > 0) {
+				myServ->channels[i].timer--;
+			}
+
+			// renewal if needed
+			if (myServ->channels[i].timer == 0) {
+				s->channels[i].timer = 60;
+				printf("sending renewal\n");
+
+				// send renewal
+			}
+		}
+	}
+}
+*/
+
+
+
 int main(int argc, char *argv[]) {
 
 	if (argc < 3) {
@@ -447,6 +644,16 @@ int main(int argc, char *argv[]) {
 		printf("Usage: each server must have a both a domain name and port num\n");
 		return -1;
 	}
+
+	// create lock
+	if (pthread_mutex_init(&lock, NULL) != 0) {
+		perror("Mutex init failed");
+		return EXIT_FAILURE;
+	}
+
+	//signal(SIGINT, signal_handler);
+	
+	pthread_t timer_thread;
 
 	// extract command line arguments
 	const char *serverHost = argv[1];
@@ -565,6 +772,12 @@ int main(int argc, char *argv[]) {
 	// set up own server
 	server myServer;
 	initServer(&myServer);
+	
+	//myServer.host = serverHostString;
+	strncpy(myServer.host, serverHostString, INET_ADDRSTRLEN - 1);
+	myServer.host[INET_ADDRSTRLEN- 1] = '\0';
+	myServer.port = serverSocketString;
+
 
 	/*printf("%s:%d\n", serverHostString, serverSocketString);
 	fflush(stdout);
@@ -617,10 +830,22 @@ int main(int argc, char *argv[]) {
 
 	uList->capacity = 2;
 	uList->size = 0;
-
 	
+	threadInfo tInfo;
+	tInfo.l = &servList;
+	tInfo.s = &myServer;
+	tInfo.socket = socketfd;
+
+	//setupTimer();
+	//setup timer thread
+	pthread_create(&timer_thread, NULL, handleTimers, (void*)&tInfo);
+
 	// listen loop
 	while(true) {
+
+		//if (timer_flag) {
+			//handleTimers(&myServer, &servList);
+		//}
 		// init fd set
 		FD_ZERO(&readfds);
 
@@ -628,7 +853,7 @@ int main(int argc, char *argv[]) {
 		FD_SET(socketfd, &readfds);
 
 		// set timeout
-		timeout.tv_sec = 1;
+		timeout.tv_sec = 5;
 		timeout.tv_usec = 0;
 
 		// wait for connection
@@ -642,6 +867,7 @@ int main(int argc, char *argv[]) {
 
 		// connection initiated
 		else if (activity > 0) {
+			pthread_mutex_lock(&lock);
 			ssize_t inbytes = recvfrom(socketfd, inBuff, sizeof(inBuff) - 1, 0, (struct sockaddr *)&clientAddr, &clientLength);
 		        //printf("%ld\n", inbytes);	
 			inBuff[inbytes] = '\0';
@@ -695,7 +921,7 @@ int main(int argc, char *argv[]) {
 					//printf("%s\n", chanList->channels[0].users[0].username);
 					}
 					else {
-						printf("server: Bad packet, expecting packet of size 36, got %ld\n", inbytes);
+						printf("%s:%d Bad packet, expecting packet of size 36, got %ld\n", serverHostString, serverSocketString, inbytes);
 
 
 						char errorBuff[SAY_MAX];
@@ -752,7 +978,7 @@ int main(int argc, char *argv[]) {
 
 						// if channel is empty, remove channel
 					      	if (chanList->channels[index].size == 0) {
-							printf("server: removing empty channel %s\n", chanList->channels[index].name);
+							printf("%s:%d removing empty channel %s locally\n", serverHostString, serverSocketString, chanList->channels[index].name);
 							fflush(stdout);
 							removeChannel(chanList, chanList->channels[index].name);
 						}
@@ -774,7 +1000,7 @@ int main(int argc, char *argv[]) {
 
 					// bad packet
 					else {
-						printf("server: Bad packet, expecting packet of size 4, got %ld\n", inbytes);
+						printf("%s:%d Bad packet, expecting packet of size 4, got %ld\n", serverHostString, serverSocketString, inbytes);
 
 
 						char errorBuff[SAY_MAX];
@@ -852,7 +1078,8 @@ int main(int argc, char *argv[]) {
 						// check if subbed
 						int subbed = 0;
 						for (int i = 0; i < myServer.channel_size; i++) {
-							if (strcmp(inChannel, myServer.channels[i]) == 0) {
+							//if (strcmp(inChannel, myServer.channels[i]) == 0) {
+							if (strcmp(inChannel, myServer.channels[i].name) == 0) {
 								subbed = 1;
 								break;
 							}
@@ -876,7 +1103,8 @@ int main(int argc, char *argv[]) {
 								int search = 0; 
 								// add channel to server if not in it already
 								for (int j = 0; j < servList.servers[i].channel_size; j++) {
-									if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+									//if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+									if (strcmp(servList.servers[i].channels[j].name, inChannel) == 0) {
 										search = 1;
 									}
 								}
@@ -905,7 +1133,7 @@ int main(int argc, char *argv[]) {
 					
 					// bad packet
 					else {
-						printf("server: Bad packet, expecting packet of size 36, got %ld\n", inbytes);
+						printf("%s:%d Bad packet, expecting packet of size 36, got %ld\n", serverHostString, serverSocketString, inbytes);
 
 
 						char errorBuff[SAY_MAX];
@@ -977,14 +1205,14 @@ int main(int argc, char *argv[]) {
 					if (exists && found) {
 
 						// remove user from channel
-						printf("server: %s leaves channel %s\n", inUsername, inChannel);
+						printf("%s:%d %s leaves channel %s\n", serverHostString, serverSocketString, inUsername, inChannel);
 						removeUserChannel(chanList, inChannel, inUsername);
 
 						// if channel is empty, remove channel
 						for (int i = 0; i < chanList->size; i++) {
 							if (strcmp(inChannel, chanList->channels[i].name) == 0) {
 								if (chanList->channels[i].size == 0) {
-									printf("server: %s channel empty removing\n", chanList->channels[i].name);
+									printf("%s:%d %s channel empty removing locally\n", serverHostString, serverSocketString, chanList->channels[i].name);
 									fflush(stdout);
 									removeChannel(chanList, chanList->channels[i].name);
 								}
@@ -994,7 +1222,7 @@ int main(int argc, char *argv[]) {
 
 					// send error if not in channel
 					else if (exists && !found) {
-						printf("server: %s is trying to leave channel %s where he/she is not a member\n", inUsername, inChannel);
+						printf("%s:%d %s is trying to leave channel %s where he/she is not a member\n", serverHostString, serverSocketString, inUsername, inChannel);
 						char errorBuff[SAY_MAX];
 						// pack error struct
 						struct text_error error_text;
@@ -1014,7 +1242,7 @@ int main(int argc, char *argv[]) {
 
 					// send error if channel does not exist
 					else if (!exists) {
-						printf("server: %s trying to leave a non-existent channel %s\n", inUsername, inChannel);
+						printf("%s:%d %s trying to leave a non-existent channel %s\n", serverHostString, serverSocketString, inUsername, inChannel);
 						char errorBuff[SAY_MAX];
 						// pack error struct
 						struct text_error error_text;
@@ -1040,8 +1268,8 @@ int main(int argc, char *argv[]) {
 
 					// bad packet
 					else {
-						printf("server: Bad packet, expecting packet of size 36, got %ld\n", inbytes);
-						printf("leave\n");
+						printf("%s:%d Bad packet, expecting packet of size 36, got %ld\n", serverHostString, serverSocketString, inbytes);
+						//printf("leave\n");
 						fflush(stdout);
 
 
@@ -1109,7 +1337,7 @@ int main(int argc, char *argv[]) {
 					}
 
 					free(list_text);
-					printf("server: %s lists channels\n", inUsername);
+					printf("%s:%d %s lists channels\n", serverHostString, serverSocketString, inUsername);
 					}
 
 					else {
@@ -1119,7 +1347,7 @@ int main(int argc, char *argv[]) {
 
 					// bad packet
 					else {
-						printf("server: Bad packet, expecting packet of size 4, got %ld\n", inbytes);
+						printf("%s:%d Bad packet, expecting packet of size 4, got %ld\n", serverHostString, serverSocketString, inbytes);
 
 
 						char errorBuff[SAY_MAX];
@@ -1211,7 +1439,7 @@ int main(int argc, char *argv[]) {
 
 						if (search) {
 
-						printf("server: %s lists users in channel %s\n", inUsername, inChannel);
+						printf("%s:%d %s lists users in channel %s\n", serverHostString, serverSocketString, inUsername, inChannel);
 						bytes = sendto(socketfd, who_text, whoSize, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
 						if (bytes < 0) {
 							printf("error sending info\n");
@@ -1227,7 +1455,7 @@ int main(int argc, char *argv[]) {
 
 					// send error if not found
 					else {
-						printf("Server: %s trying to list users in non-existing channel %s\n", inUsername, inChannel);
+						printf("%s:%d %s trying to list users in non-existing channel %s\n", serverHostString, serverSocketString, inUsername, inChannel);
 
 						// fill struct
 						char errorBuff[SAY_MAX];
@@ -1252,7 +1480,7 @@ int main(int argc, char *argv[]) {
 					// bad packet
 					else {
 
-						printf("server: Bad packet, expecting packet of size 36, got %ld\n", inbytes);
+						printf("%s:%d Bad packet, expecting packet of size 36, got %ld\n", serverHostString, serverSocketString, inbytes);
 
 
 						char errorBuff[SAY_MAX];
@@ -1347,7 +1575,8 @@ int main(int argc, char *argv[]) {
 					// find subbed servers
 					for (int i = 0; i < servList.server_size; i++) {
 						for (int j = 0; j < servList.servers[i].channel_size; j++) {
-							if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+							//if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+							if (strcmp(servList.servers[i].channels[j].name, inChannel) == 0) {
 								// log
 								printf("%s:%d %s:%d send S2S say %s %s \"%s\"\n", serverHostString, serverSocketString, servList.servers[i].host, servList.servers[i].port, inUsername, inChannel, inMessage);
 								// send message
@@ -1370,7 +1599,7 @@ int main(int argc, char *argv[]) {
 					}
 					// bad packet
 					else {
-						printf("server: Bad packet, expecting packet of size 100, got %ld\n", inbytes);
+						printf("%s:%d Bad packet, expecting packet of size 100, got %ld\n", serverHostString, serverSocketString, inbytes);
 
 
 						char errorBuff[SAY_MAX];
@@ -1403,10 +1632,21 @@ int main(int argc, char *argv[]) {
 
 					printf("%s:%d %s:%d recv S2S Join %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inChannel);
 
-					// add subscription to corresponding server record
+					// add subscription to corresponding server record and update the last_join
 					for (int i = 0; i < servList.server_size; i++) {
 						if (compareSocket(clientAddr, servList.servers[i].address)) {
-							addChannel(&servList.servers[i], inChannel);
+							int exists = 0;
+							// check if channel already exists
+							for (int j = 0; j < servList.servers[i].channel_size; j++) {
+								if (strcmp(servList.servers[i].channels[j].name, inChannel) == 0) {
+									servList.servers[i].channels[j].last_join = 120;
+									exists = 1;
+									break;
+								}
+							}
+							if (!exists) {
+								addChannel(&servList.servers[i], inChannel);
+							}
 							break;
 						}
 					}
@@ -1414,7 +1654,8 @@ int main(int argc, char *argv[]) {
 					// check if server is subscribed
 					for (int i = 0; i < myServer.channel_size; i++) {
 						// if subbed
-						if (strcmp(inChannel, myServer.channels[i]) == 0) {
+						//if (strcmp(inChannel, myServer.channels[i]) == 0) {
+						if (strcmp(inChannel, myServer.channels[i].name) == 0) {
 							subbed = 1;
 						}
 					}
@@ -1436,7 +1677,8 @@ int main(int argc, char *argv[]) {
 								int search = 0; 
 								// add channel to server if not in it already
 								for (int j = 0; j < servList.servers[i].channel_size; j++) {
-									if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+									//if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+									if (strcmp(servList.servers[i].channels[j].name, inChannel) == 0) {
 										search = 1;
 									}
 								}
@@ -1458,7 +1700,7 @@ int main(int argc, char *argv[]) {
 					}
 					}
 					else {
-						printf("bad packet, got %ld, when expecting 36 bytes\n", inbytes);
+						printf("%s:%d bad packet, got %ld, when expecting 36 bytes\n", serverHostString, serverSocketString, inbytes);
 						/*char errorBuff[SAY_MAX];
 						// pack error struct
 						struct text_error error_text;
@@ -1502,7 +1744,25 @@ int main(int argc, char *argv[]) {
 							// if exists drop packet and send leave to prevent loop
 							if (strcmp(identifiers.recent_ids[i], inIdentifier) == 0) {
 								found = 1;
-								printf("dropping packet\n");
+								printf("%s:%d %s:%d Loop detected, send S2S Leave %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inChannel);
+
+								removeChannel(&myServer, inChannel);
+
+								// create s2s leave message
+								struct s2s_leave leave_s2s;
+								leave_s2s.req_type = S2S_LEAVE;
+								strncpy(leave_s2s.req_channel, inChannel, CHANNEL_MAX - 1);
+								leave_s2s.req_channel[CHANNEL_MAX - 1] = '\0';
+
+								// log
+								//printf("%s:%d %s:%d send S2S Leave %s\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inChannel);
+
+								// send s2s leave message
+								bytes = sendto(socketfd, &leave_s2s, sizeof(leave_s2s), 0, (struct sockaddr*)&clientAddr, sizeof(struct sockaddr_in));
+								if (bytes < 0) {
+									printf("error sending bytes\n");
+								}
+
 								break;
 							}
 						}
@@ -1527,12 +1787,17 @@ int main(int argc, char *argv[]) {
 						printf("%s:%d %s:%d recv S2S say %s %s \"%s\"\n", serverHostString, serverSocketString, clientHostString, clientSocketString, inUsername, inChannel, inMessage);
 
 						int client = 0;
+						int first = 1;
 						// find channel
 						for (int i = 0; i < chanList->size; i++) {
 							if (strcmp(inChannel, chanList->channels[i].name) == 0) {
 								// for each user on channel
 								client = 1;
 								for (int j = 0; j < chanList->channels[i].size; j++) {
+									if (first) {
+										printf("%s:%d %s:%d send say message \"%s\" in %s from %s\n", serverHostString, serverSocketString, inet_ntoa(chanList->channels[i].users[j].address.sin_addr), ntohs(chanList->channels[i].users[j].address.sin_port), inMessage, inChannel, inUsername);
+										first = 0;
+									}
 									//if (compareSocket(chanList->channels[i].users[j].address, clientAddr)) {
 										//}
 								// send message to user
@@ -1551,7 +1816,8 @@ int main(int argc, char *argv[]) {
 							//printf("%d\n", servList.servers[i].port);
 							if (!compareSocket(clientAddr, servList.servers[i].address)) {
 								for (int j = 0; j < servList.servers[i].channel_size; j++) {
-									if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+									//if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
+									if (strcmp(servList.servers[i].channels[j].name, inChannel) == 0) {
 										servs = 1;
 										printf("%s:%d %s:%d send S2S say %s %s \"%s\"\n", serverHostString, serverSocketString, servList.servers[i].host, servList.servers[i].port, inUsername, inChannel, inMessage);
 										bytes = sendto(socketfd, say_s2s, sizeof(*say_s2s), 0, (struct sockaddr *)&servList.servers[i].address, sizeof(struct sockaddr_in));
@@ -1590,7 +1856,7 @@ int main(int argc, char *argv[]) {
 						}
 					}
 					else {
-						printf("bad packet, got %ld, when expecting 140 bytes", inbytes);/*
+						printf("%s:%d bad packet, got %ld, when expecting 140 bytes", serverHostString, serverSocketString, inbytes);/*
 						char errorBuff[SAY_MAX];
 						// pack error struct
 						struct text_error error_text;
@@ -1631,7 +1897,7 @@ int main(int argc, char *argv[]) {
 					}
 
 					else {
-						printf("bad packet, got %ld, when expecting 36 bytes", inbytes);
+						printf("%s:%d bad packet, got %ld, when expecting 36 bytes", serverHostString, serverSocketString, inbytes);
 						/*char errorBuff[SAY_MAX];
 						// pack error struct
 						struct text_error error_text;
@@ -1652,7 +1918,7 @@ int main(int argc, char *argv[]) {
 
 				// unknown request
 				else {
-						printf("Server: recieved Unknown packet\n");
+						printf("%s:%d recieved Unknown packet\n", serverHostString, serverSocketString);
 						/*
 
 						// fill struct
@@ -1673,11 +1939,13 @@ int main(int argc, char *argv[]) {
 						*/
 
 				}
+		}
+		pthread_mutex_unlock(&lock);
 
 		}
-
-
-		}
+		//printf("here\n");
+	//	fflush(stdout);
+		//handleTimers(&myServer, &servList);
 
 
 	}
