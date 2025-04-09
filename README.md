@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project impliments a chat service using a self defined protocal with a client and server architecture. A client can log into a server, join chat rooms, and chat with users in the room on any other server. The server topology is protected with loop detection and crash detection / recovery and each server passes along messages as needed to connected servers. The servers can be hosted on local host or given ip address. The protocol can be seen in the duckchat.h file. 
+This project impliments a chat service using a self defined protocol with a client and server architecture. A client can log into a server, join chat rooms, and chat with users in the room on any other server. The server topology is protected with loop detection and crash detection / recovery and each server passes along messages as needed to connected servers. The servers can be hosted on local host or given ip address. The protocol can be seen in the duckchat.h file. 
 
 ## Technical Requirements
 
