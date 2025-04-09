@@ -11,6 +11,7 @@ Currently this program only works on Unix and will Segfault on Mac. I have not t
 ## Installation
 
 Just clone the repo and you are good to go!
+There are executables in the repo, but you can clean and build your own with `<make clean>` and `<make all>` commands
 
 ## Running the Program
 (ignore the `<>` when running the program, they are only included for readability)
