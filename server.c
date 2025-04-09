@@ -37,7 +37,6 @@ typedef struct {
 	struct sockaddr_in address;
 	char host[INET_ADDRSTRLEN];
 	int port;
-	//char **channels;
 	channel_sub *channels;
 	int channel_size;
 	int channel_cap;
@@ -68,8 +67,6 @@ typedef struct {
 // struct to hold the Channel list and user list
 
 typedef struct {
-	// dont need seperate list of users?
-	//user *users;
 	channel *channels;
 	int capacity;
 	int size;
@@ -91,20 +88,6 @@ typedef struct {
 
 volatile sig_atomic_t timer_flag = 0;
 volatile sig_atomic_t exiting = 0;
-
-// helper functions
-/*
-void addUser(channelList *list, char *channelName, char *userName, struct sockaddr_in address) {
-	// this function is for adding a user to an existing 
-	// find channel in list
-}
-*/
-
-//void signal_handler(int sig) {
-	// sets shutdown
-	//(void)sig;
-	//exiting = 1;
-//}
 
 void timerHandler(int signum) {
 	// update flag
@@ -164,7 +147,6 @@ void initServerList(serverList *list) {
 
 void initServer(server *s) {
 	// initializes the servers channel list 
-	//s->channels = (char **)malloc(2 * sizeof(char *));
 	s->channels = (channel_sub *)malloc(2 * sizeof(channel_sub));
 
 	// error checking
@@ -207,7 +189,6 @@ void addChannel(server *s, char *name) {
 	// resize if need capacity
 	if (s->channel_size >= s->channel_cap) {
 		s->channel_cap *= 2;
-		//s->channels = (char **)realloc(s->channels, s->channel_cap * sizeof(char *));
 		s->channels = (channel_sub *)realloc(s->channels, s->channel_cap * sizeof(channel));
 		// error checking
 		if (!s->channels) {
@@ -215,17 +196,9 @@ void addChannel(server *s, char *name) {
 			exit(EXIT_FAILURE);
 		}
 	}
-	//s->channels[s->channel_size].name = (char *)malloc(CHANNEL_MAX * sizeof(char));
-
-	// error checking
-	//if (!s->channels[s->channel_size]) {
-		//perror("Failed to allocate mem for channel name");
-		//return;
-	//}
-
+	
 	// add channel
 	strncpy(s->channels[s->channel_size].name, name, CHANNEL_MAX - 1);
-	//s->channels[s->channel_size][CHANNEL_MAX - 1] = '\0';
 	s->channels[s->channel_size].name[CHANNEL_MAX - 1] = '\0';
 	s->channels[s->channel_size].timer = 60;
 	s->channels[s->channel_size].last_join = 120;
@@ -239,8 +212,6 @@ void removeChannel(server *s, char *name) {
 	for (int i = 0; i < s->channel_size; i++) {
 		//if (strcmp(s->channels[i], name) == 0) {
 		if (strcmp(s->channels[i].name, name) == 0) {
-			// remove channel
-			//free(s->channels[i]);
 
 			// shift
 			for (int j = i; j < s->channel_size - 1; j++) {
@@ -257,10 +228,6 @@ void removeChannel(server *s, char *name) {
 void addToChannel(channelList *list, char *channelName, char *userName, struct sockaddr_in address) {
 	// adds user to channel and if channel does not exist,
 	// adds a new channel to the channel list, and adds the user to that list
-	//if (channelName == NULL || strlen(channelName) == 0) {
-	//	printf("error with channel name\n");
-		//return;
-	//}
 	
 	// search for channel
 	for (int i = 0; i < list->size; i++) {
@@ -283,7 +250,6 @@ void addToChannel(channelList *list, char *channelName, char *userName, struct s
 			newUser.address = address;
 
 			// add user to list
-			//printf("SHOULD NOT PRINT\n");
 			list->channels[i].users[list->channels[i].size] = newUser;
 			list->channels[i].size++;
 			return;
@@ -341,9 +307,7 @@ void removeUserChannel(channelList *list, char *channelName, char* userName) {
 	// find the channel user wants to leave
 	for (int i = 0; i < list->size; i++) {
 		if (strcmp(list->channels[i].name, channelName) == 0) {
-			//printf("\n");
 
-			//int found = 0;
 			// find the user in the user list
 			for (int j = 0; j < list->channels[i].size; j++) {
 				if (strcmp(list->channels[i].users[j].username, userName) == 0) {
@@ -384,7 +348,6 @@ void removeChannel(channelList *list, char *channelName) {
 			}
 
 			// null last swap
-			//list->channels[list->size - 1] = NULL;
 			memset(&list->channels[list->size - 1], 0, sizeof(channel));
 
 			// decrease size
@@ -429,7 +392,6 @@ void removeUserList(userList *list, char *userName) {
 		if (strcmp(list->users[i].username, userName) == 0) {
 	
 			// free memory
-			//free(list->users[i]);
 
 			// shift elements to fix gap
 			for (int j = i; j < list->size - 1; j++) {
@@ -456,9 +418,6 @@ void freeChannelList(channelList *list) {
 		free(list->channels[i].users);
 	}
 	free(list->channels);
-	
-	// might not need
-	// list->channels = NULL
 }
 
 int compareSocket(struct sockaddr_in addr1, struct sockaddr_in addr2) {
@@ -490,51 +449,8 @@ void getIdentifier(char *buff) {
 	close(urandomfd);	
 }
 
-/*
-void handleTimers(server *myServ, serverList *others) {
-	// func to handle channel timers
-	
-	// loop over my channels
-	for (int i = 0; i < myServ->channel_size; i++) {
-		if (myServ->channels[i].timer > 0) {
-			myServ->channels[i].timer -= 5;
-			printf("mine: %d\n", myServ->channels[i].timer);
-		}
-
-		// resend if needed
-		if (myServ->channels[i].timer == 0) {
-			myServ->channels[i].timer = 60;
-			
-			// send renew
-			printf("send S2S renew %s\n", myServ->channels[i].name);
-		}
-	}
-
-	// loop over other channels
-	for (int i = 0; i < others->server_size; i++) {
-		for (int j = 0; j < others->servers[i].channel_size; j++) {
-			//printf("S: %d\n", others->servers[i].channels[j].last_join);
-			if (others->servers[i].channels[j].last_join > 0) {
-				others->servers[i].channels[j].last_join -= 5;
-				printf("Others: %d\n", others->servers[i].channels[j].last_join);
-
-			}
-
-			// remove if needed
-			if (others->servers[i].channels[j].last_join == 0) {
-				// remove
-				//printf("forcfully removing %s\n", others->servers[i].channels[j].name);
-			}
-		}
-	}
-	
-}
-*/
-
 void *handleTimers(void *arg) {
 	// function for timeout thread
-
-	// sleep for second
 
 	// get mutex
 	threadInfo *info = (threadInfo *)arg;
@@ -542,9 +458,7 @@ void *handleTimers(void *arg) {
 	while (!exiting) {
 		sleep(1);
 		pthread_mutex_lock(&lock);
-	//	printf("%s\n", info->s->host);
 		for (int i = 0; i < info->l->server_size; i++) {
-			//for (int j = 0; j < info->l->servers[i].channel_size; j++) {
 			for (int j = info->l->servers[i].channel_size - 1; j >= 0; j--) {
 				if (info->l->servers[i].channels[j].last_join > 0) {
 					info->l->servers[i].channels[j].last_join--;
@@ -552,7 +466,6 @@ void *handleTimers(void *arg) {
 
 				// remove if timout
 				if (info->l->servers[i].channels[j].last_join == 0) {
-					//printf("removing channel\n");
 					printf("%s:%d %s:%d forcefully removing %s\n", info->s->host, info->s->port, info->l->servers[i].host, info->l->servers[i].port, info->l->servers[i].channels[j].name);
 					removeChannel(&info->l->servers[i], info->l->servers[i].channels[j].name);
 				}
@@ -566,7 +479,6 @@ void *handleTimers(void *arg) {
 			// renewal if needed
 			if (info->s->channels[i].timer == 0) {
 				info->s->channels[i].timer = 60;
-				//printf("%s:%d sending renewal\n");
 
 				// send renewal
 				// create the s2s join message
@@ -582,7 +494,6 @@ void *handleTimers(void *arg) {
 					int search = 0; 
 					// add channel to server if not in it already
 					for (int j = 0; j < info->l->servers[k].channel_size; j++) {
-						//if (strcmp(servList.servers[i].channels[j], inChannel) == 0) {
 						if (strcmp(info->l->servers[k].channels[j].name, info->s->channels[i].name) == 0) {
 							search = 1;
 						}
@@ -609,31 +520,6 @@ void *handleTimers(void *arg) {
 	return NULL;
 }
 
-/*
-void *handleRenewal(void *arg) {
-	// func for Join Renewal thread
-	
-	sleep(1);
-	while (!exiting) {
-		for (int i = 0; i < myServ->channel_size; i++) {
-			if (myServ->channels[i].timer > 0) {
-				myServ->channels[i].timer--;
-			}
-
-			// renewal if needed
-			if (myServ->channels[i].timer == 0) {
-				s->channels[i].timer = 60;
-				printf("sending renewal\n");
-
-				// send renewal
-			}
-		}
-	}
-}
-*/
-
-
-
 int main(int argc, char *argv[]) {
 
 	if (argc < 3) {
@@ -650,8 +536,6 @@ int main(int argc, char *argv[]) {
 		perror("Mutex init failed");
 		return EXIT_FAILURE;
 	}
-
-	//signal(SIGINT, signal_handler);
 	
 	pthread_t timer_thread;
 
@@ -659,11 +543,6 @@ int main(int argc, char *argv[]) {
 	const char *serverHost = argv[1];
 	char *serverPortString = argv[2];
 
-	// deal with local host input
-	//if (strcmp(serverHost, "localhost") == 0) {
-		//serverHost = "127.0.0.1";
-	//}
-	
 	// set up server list
 
 	// resolve hostname
@@ -679,7 +558,6 @@ int main(int argc, char *argv[]) {
 	}
 
 	// convert port to int for socket addr struct and binding
-	//int serverPort = atoi(serverPortString);
 
 	// create server socket
 	int socketfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -693,9 +571,7 @@ int main(int argc, char *argv[]) {
 
 	// loop through the inputed arguments
 	for (int i = 3; i < argc; i += 2) {
-		//printf("%s\n", argv[i]);
 		const char *comHost = argv[i];
-		//printf("%s\n", argv[i + 1]);
 		char *comPortString = argv[i + 1];
 
 		// resolve hostname
@@ -723,7 +599,6 @@ int main(int argc, char *argv[]) {
 		// get port num
 		int comSocketString = ntohs(addr->sin_port);
 
-		//printf("%s:%d\n", comHostString, comSocketString);
 		fflush(stdout);
 
 
@@ -742,14 +617,7 @@ int main(int argc, char *argv[]) {
 	struct sockaddr_in clientAddr;
 	socklen_t clientLength = sizeof(clientAddr);
 
-	// clean struct
-	//memset(&serverAddr, 0, sizeof(serverAddr));
-	//serverAddr.sin_family = AF_INET;
-	//serverAddr.sin_port = htons(serverPort);
-	//serverAddr.sin_addr.s_addr = INADDR_ANY;
-
 	// bind socket
-	//if (bind(socketfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0) {
 	if (bind(socketfd, resolution->ai_addr, resolution->ai_addrlen) == -1) {
 		perror("bind failure\n");
 		close(socketfd);
